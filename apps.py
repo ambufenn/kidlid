@@ -5,7 +5,6 @@ from google.genai import types
 # --- 0. Setup Klien Gemini & Konfigurasi ---
 
 # Mengambil kunci API dari Streamlit Secrets
-# Pastikan Anda telah menyimpan kunci API Anda di .streamlit/secrets.toml
 try:
     API_KEY = st.secrets["gemini_api_key"]
 except KeyError:
@@ -14,11 +13,22 @@ except KeyError:
 
 client = genai.Client(api_key=API_KEY)
 MODEL_FLASH = 'gemini-2.5-flash'
-TEMPERATURE = 0.8  # Suhu tinggi untuk kreativitas dan skenario yang beragam
+TEMPERATURE = 0.8  # Suhu tinggi untuk kreativitas dan gamifikasi
+
+# --- Setup Gamifikasi Session State ---
+if 'points' not in st.session_state:
+    st.session_state.points = 0
+if 'level' not in st.session_state:
+    st.session_state.level = 1
+# Kunci untuk melacak klaim poin unik per sesi Misi
+if 'claimed_daily' not in st.session_state:
+    st.session_state.claimed_daily = False
+if 'current_quest' not in st.session_state:
+    st.session_state.current_quest = None
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Kids' Life Skills Coach",
+    page_title="Home Hero Academy",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -30,125 +40,140 @@ def call_gemini_skill_prompt(system_instruction, user_prompt):
         system_instruction=system_instruction,
         temperature=TEMPERATURE
     )
-    with st.spinner("Menciptakan skenario interaktif..."):
-        try:
-            response = client.models.generate_content(
-                model=MODEL_FLASH,
-                contents=user_prompt,
-                config=config
+    # Tidak menggunakan spinner agar tidak mengganggu st.balloons
+    try:
+        response = client.models.generate_content(
+            model=MODEL_FLASH,
+            contents=user_prompt,
+            config=config
+        )
+        return response.text
+    except Exception as e:
+        st.error(f"Gagal memproses AI: {e}")
+        return None
+
+# --- Fungsi Gamifikasi ---
+
+def check_level_up(points_earned, module_key, mission_type):
+    """Mengecek kenaikan level dengan batasan baru dan feedback naratif."""
+    
+    # Hanya proses jika belum diklaim
+    if st.session_state[module_key] == False:
+        st.session_state.points += points_earned
+        st.session_state[module_key] = True # Tandai sudah diklaim
+        
+        # Batasan Level Baru: 50, 150, 300
+        new_level = st.session_state.level
+        if st.session_state.points > 300: new_level = 4
+        elif st.session_state.points > 150: new_level = 3
+        elif st.session_state.points > 50: new_level = 2
+        else: new_level = 1
+        
+        if new_level > st.session_state.level:
+            old_level = st.session_state.level
+            st.session_state.level = new_level
+            st.success(f"LEVEL UP! Anda naik dari Level {old_level} ke Level {new_level}! 🎉")
+            
+            # Reward Cerita untuk Level Up
+            reward_story = call_gemini_skill_prompt(
+                system_instruction="Anda adalah narator Game yang memberikan hadiah cerita singkat (2 paragraf) untuk kenaikan level. Hadiah harus berupa pencapaian pahlawan rumah tangga yang fantastis, berfokus pada kebersihan atau kemandirian.",
+                user_prompt=f"Berikan hadiah kepada pahlawan Level {new_level} karena sukses menyelesaikan Misi {mission_type}. Cerita tentang bagaimana mereka mendapatkan lencana baru atau kekuatan super kebersihan."
             )
-            return response.text
-        except Exception as e:
-            st.error(f"Gagal memproses AI: {e}")
-            return None
+            if reward_story:
+                st.balloons()
+                st.markdown("### 🎁 Hadiah Level Baru!")
+                st.markdown(reward_story)
+        else:
+            st.success(f"+{points_earned} Poin ditambahkan ke akun Anda! Lanjutkan petualangan!")
 
-# --- Judul Utama Aplikasi ---
-st.title("🌟 Kids' Life Skills Coach (Didukung Gemini AI)")
-st.markdown("Aplikasi interaktif untuk melatih keterampilan hidup praktis anak usia 6-12 tahun.")
+# --- Modul Utama: Misi Harian Pahlawan Rumah ---
 
-# --- Sidebar Menu ---
-st.sidebar.title("📚 Modul Pembelajaran")
+def daily_mission_page():
+    st.header("🏠 Misi Harian Pahlawan Rumah")
+    st.markdown("Pilih misi, baca instruksi *Quest* dari AI, selesaikan tugas, dan klaim poin untuk naik level!")
+    
+    # Reset klaim untuk sesi baru
+    # Ini penting agar setiap kali tombol "Mulai Quest" ditekan, klaim bisa dilakukan lagi
+    st.session_state.claimed_daily = True 
+    
+    # 1. Input Misi
+    mission_category = st.selectbox(
+        "Pilih Kategori Misi Hari Ini:",
+        ["Kebiasaan Diri (Self-Care)", "Perawatan Kamar", "Tugas Rumah Tangga Dasar"]
+    )
+    
+    mission_choice = st.text_input("Tulis Misi Spesifik (e.g., 'Cuci Tangan 7 Langkah', 'Menyapu Ruang Tamu', 'Beresin Tempat Tidur'):")
+    
+    if st.button("Mulai Quest", type="primary"):
+        if not mission_choice:
+            st.warning("Mohon tentukan misi spesifik.")
+            return
 
+        # Tentukan Poin berdasarkan kategori
+        if mission_category == "Kebiasaan Diri (Self-Care)":
+            points = 20
+        elif mission_category == "Perawatan Kamar":
+            points = 30
+        else:
+            points = 40 # Tugas Rumah Tangga Dasar
+            
+        system_prompt = f"""
+        Anda adalah Game Master (GM) yang memberikan Quest.
+        Tugas Anda adalah memecah '{mission_choice}' (kategori: {mission_category}) menjadi 3-5 langkah/quest yang sangat sederhana, jelas, dan berurutan untuk anak usia 4-8 tahun.
+        Gunakan bahasa yang menarik dan penuh energi, seperti cerita petualangan. Pastikan instruksi sangat praktis.
+        Sebutkan total poin reward ({points} Poin) di akhir deskripsi quest.
+        """
+        
+        prompt = f"Buat Quest 'Pahlawan Rumah' untuk misi: {mission_choice}. Berikan instruksi langkah demi langkah."
+        
+        quest_description = call_gemini_skill_prompt(system_prompt, prompt)
+        
+        if quest_description:
+            # Simpan Sesi Quest
+            st.session_state['current_quest'] = quest_description
+            st.session_state['current_points'] = points
+            st.session_state['current_mission_type'] = mission_category
+            st.session_state.claimed_daily = False # Buka klaim untuk quest baru
+            
+            st.subheader(f"Misi Baru: {mission_choice} ({points} Poin)!")
+            st.markdown(quest_description)
+            st.warning("Perhatian, Pahlawan! Selesaikan Quest di dunia nyata dulu sebelum klaim poin!")
+
+
+    # 2. Tampilan Hasil Quest
+    if st.session_state.current_quest:
+        st.subheader("Instruksi Quest Aktif:")
+        st.markdown(st.session_state.current_quest)
+        
+        # 3. Tombol Klaim Poin
+        if st.button(f"✅ Klaim Poin Selesai Misi ({st.session_state['current_points']} Poin)", type="secondary"):
+            if not st.session_state.claimed_daily:
+                # Panggil fungsi leveling
+                check_level_up(st.session_state['current_points'], 'claimed_daily', st.session_state['current_mission_type'])
+                # Hapus Quest agar tidak tampil terus-menerus setelah klaim
+                st.session_state.current_quest = None 
+            else:
+                st.warning("Poin untuk misi ini sudah diklaim. Silakan buat Quest baru!")
+
+
+# --- 6. Struktur Menu Utama Streamlit (Routing) ---
+
+# Tentukan menu yang hanya berisi Modul Misi Harian
+st.sidebar.title("🛠️ Pilih Kegiatan")
 main_menu = st.sidebar.selectbox(
-    "Pilih Keterampilan yang Ingin Dilatih:",
-    ["Simulasi Role-Playing", "Perencana Tugas Harian", "Tantangan Keuangan"]
+    "1. Pilih Modul:",
+    ["Tentang Aplikasi", "Misi Pahlawan Rumah Tangga"]
 )
 
-# --- 1. Modul: Simulasi Role-Playing (Keterampilan Sosial) ---
-if main_menu == "Simulasi Role-Playing":
-    st.header("🎭 Role-Playing: Keterampilan Sosial")
-    st.markdown("Ciptakan skenario yang menyenangkan agar anak belajar menghadapi situasi sosial.")
-    
-    # Input Pengguna
-    skill_choice = st.selectbox(
-        "Pilih Keterampilan Dasar:",
-        ["Menyelesaikan Konflik", "Meminta Bantuan", "Berbagi dan Bekerja Sama", "Mengelola Emosi"]
-    )
-    child_age = st.number_input("Usia Anak:", min_value=6, max_value=12, value=8)
-    
-    user_input = st.text_input("Tokoh atau Situasi yang disukai Anak (Opsional, e.g., 'bertemu robot baik', 'di sekolah baru'):")
-    
-    if st.button("Mulai Skenario Baru", type="primary"):
-        # System Instruction untuk Role-Playing
-        system_prompt = f"""
-        Anda adalah seorang Storyteller AI yang ramah dan suportif, khusus untuk anak usia {child_age} tahun. 
-        Tugas Anda adalah membuat skenario role-playing singkat (3-4 paragraf) yang berfokus melatih '{skill_choice}'. 
-        Skenario harus interaktif, diakhiri dengan pertanyaan yang membutuhkan keputusan anak. 
-        Gunakan nada bahasa yang positif, sederhana, dan menarik untuk anak.
-        """
-        
-        prompt = f"Ciptakan skenario interaktif untuk melatih {skill_choice}. Tambahkan elemen: {user_input if user_input else 'cerita sehari-hari'}."
-        
-        scenario = call_gemini_skill_prompt(system_prompt, prompt)
-        
-        if scenario:
-            st.subheader(f"Petualangan {skill_choice} Dimulai!")
-            st.markdown(scenario)
-            st.info("Ajak anak Anda menjawab pertanyaan di akhir skenario. Anda bisa melanjutkan diskusi dengan anak Anda.")
+# --- Routing Logika Berdasarkan Pilihan Menu ---
 
-# --- 2. Modul: Perencana Tugas Harian (Keterampilan Organisasi) ---
-elif main_menu == "Perencana Tugas Harian":
-    st.header("📋 Perencana Tugas Harian")
-    st.markdown("Buat jadwal yang menyenangkan dan realistis agar anak belajar mengatur waktu dan memprioritaskan tugas.")
+if main_menu == "Tentang Aplikasi":
+    st.info("Selamat datang di Home Hero Academy! Aplikasi ini menggunakan AI untuk mengubah tugas rumah tangga menjadi petualangan berpoin.")
+    st.subheader("Cara Kerja:")
+    st.markdown("* **Pilih Misi:** Tulis tugas sehari-hari (merapikan kasur, cuci tangan).")
+    st.markdown("* **AI Buat Quest:** Gemini memecah tugas menjadi langkah-langkah permainan.")
+    st.markdown("* **Klaim Poin:** Setelah selesai di dunia nyata, klaim poin untuk naik **Level** dan dapat **Hadiah Cerita** (Reward Story).")
+    st.markdown(f"Model Dasar: **{MODEL_FLASH}**")
 
-    tasks = st.text_area("Daftar Tugas yang Harus Dilakukan Anak (Pisahkan dengan koma, contoh: 'rapikan mainan, kerjakan PR, bantu siram bunga'):")
-    
-    if st.button("Buat Rencana Prioritas", type="primary"):
-        if tasks:
-            system_prompt = """
-            Anda adalah Time Management Coach yang lucu dan tegas.
-            Tugas Anda adalah mengambil daftar tugas anak dan:
-            1. Mengelompokkannya menjadi 'Mendesak (Kerjakan Sekarang)', 'Penting (Kerjakan Nanti)', dan 'Bisa Ditunda (Bonus)'.
-            2. Memberikan motivasi yang mendorong penyelesaian tugas, bukan hukuman.
-            3. Tambahkan ikon emoji yang menarik.
-            Tampilkan hasilnya dalam format daftar Markdown dengan heading yang jelas.
-            """
-            prompt = f"Tolong atur tugas-tugas berikut ke dalam kategori prioritas dan berikan saran urutan yang masuk akal: {tasks}"
-            
-            plan = call_gemini_skill_prompt(system_prompt, prompt)
-            
-            if plan:
-                st.subheader("Rencana Tugas Harian Siap!")
-                st.markdown(plan)
-
-# --- 3. Modul: Tantangan Keuangan (Keterampilan Finansial) ---
-elif main_menu == "Tantangan Keuangan":
-    st.header("💸 Tantangan Finansial Sederhana")
-    st.markdown("Simulasikan keputusan uang untuk mengajarkan konsep menabung, keinginan vs. kebutuhan.")
-
-    # Menggunakan text_input karena nominal bisa berupa Rupiah, Dollar, dll.
-    money_amount_str = st.text_input("Jumlah Uang Awal Anak (e.g., Rp 10.000, $5.00):", value="Rp 10.000")
-    
-    st.subheader("Pilihan Belanja:")
-    item1 = st.text_input("Pilihan 1 (e.g., 'Buku Komik'):", value="Buku Komik")
-    cost1_str = st.text_input("Harga Pilihan 1:", value="Rp 5.000")
-    
-    item2 = st.text_input("Pilihan 2 (e.g., 'Mainan Baru'):", value="Mainan Baru")
-    cost2_str = st.text_input("Harga Pilihan 2:", value="Rp 15.000")
-    
-    if st.button("Analisis Keputusan Uang", type="primary"):
-        # Cek input dasar
-        if not all([money_amount_str, item1, cost1_str, item2, cost2_str]):
-            st.warning("Mohon isi semua kolom input.")
-            st.stop()
-            
-        system_prompt = f"""
-        Anda adalah Financial Advisor yang sabar untuk anak-anak. Uang saku awal adalah {money_amount_str}.
-        Tugas Anda adalah:
-        1. Membuat skenario di mana anak harus memilih antara menabung atau membeli salah satu item.
-        2. Menjelaskan konsep 'Keinginan vs. Kebutuhan' dalam bahasa yang sederhana dan menarik.
-        3. Memberikan 3 saran konkret bagaimana anak bisa mendapatkan uang tambahan atau menabung secara disiplin.
-        Gunakan mata uang yang dimasukkan ({money_amount_str}).
-        """
-        prompt = f"""
-        Anak memiliki uang {money_amount_str}. Mereka ingin membeli:
-        - {item1} seharga {cost1_str}
-        - {item2} seharga {cost2_str}
-        Buat skenario keputusan yang mengajarkan tentang uang.
-        """
-        
-        analysis = call_gemini_skill_prompt(system_prompt, prompt)
-        
-        if analysis:
-            st.subheader("Skenario Keuangan dan Nasihat")
-            st.markdown(analysis)
+elif main_menu == "Misi Pahlawan Rumah Tangga":
+    daily_mission_page()
