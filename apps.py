@@ -40,7 +40,7 @@ def call_gemini_skill_prompt(system_instruction, user_prompt):
         system_instruction=system_instruction,
         temperature=TEMPERATURE
     )
-    # Tidak menggunakan spinner agar tidak mengganggu st.balloons
+    # Menghapus st.spinner di sini agar tidak mengganggu st.balloons
     try:
         response = client.models.generate_content(
             model=MODEL_FLASH,
@@ -63,14 +63,17 @@ def check_level_up(points_earned, module_key, mission_type):
         st.session_state[module_key] = True # Tandai sudah diklaim
         
         # Batasan Level Baru: 50, 150, 300
+        old_level = st.session_state.level
+        
         new_level = st.session_state.level
         if st.session_state.points > 300: new_level = 4
         elif st.session_state.points > 150: new_level = 3
         elif st.session_state.points > 50: new_level = 2
         else: new_level = 1
         
-        if new_level > st.session_state.level:
-            old_level = st.session_state.level
+        st.success(f"+{points_earned} Poin ditambahkan! Lanjutkan Petualangan!")
+
+        if new_level > old_level:
             st.session_state.level = new_level
             st.success(f"LEVEL UP! Anda naik dari Level {old_level} ke Level {new_level}! 🎉")
             
@@ -83,18 +86,12 @@ def check_level_up(points_earned, module_key, mission_type):
                 st.balloons()
                 st.markdown("### 🎁 Hadiah Level Baru!")
                 st.markdown(reward_story)
-        else:
-            st.success(f"+{points_earned} Poin ditambahkan ke akun Anda! Lanjutkan petualangan!")
 
 # --- Modul Utama: Misi Harian Pahlawan Rumah ---
 
 def daily_mission_page():
     st.header("🏠 Misi Harian Pahlawan Rumah")
     st.markdown("Pilih misi, baca instruksi *Quest* dari AI, selesaikan tugas, dan klaim poin untuk naik level!")
-    
-    # Reset klaim untuk sesi baru
-    # Ini penting agar setiap kali tombol "Mulai Quest" ditekan, klaim bisa dilakukan lagi
-    st.session_state.claimed_daily = True 
     
     # 1. Input Misi
     mission_category = st.selectbox(
@@ -126,6 +123,7 @@ def daily_mission_page():
         
         prompt = f"Buat Quest 'Pahlawan Rumah' untuk misi: {mission_choice}. Berikan instruksi langkah demi langkah."
         
+        # Panggil AI untuk mendapatkan Quest
         quest_description = call_gemini_skill_prompt(system_prompt, prompt)
         
         if quest_description:
@@ -156,23 +154,37 @@ def daily_mission_page():
                 st.warning("Poin untuk misi ini sudah diklaim. Silakan buat Quest baru!")
 
 
-# --- 6. Struktur Menu Utama Streamlit (Routing) ---
+# --- Judul Utama Aplikasi ---
+st.title("🌟 Home Hero Academy (Didukung Gemini AI)")
+st.markdown("Aplikasi interaktif untuk melatih **Kemandirian Harian** anak melalui Misi dan Poin!")
+
+# --- Sidebar Menu & Status Gamifikasi ---
+st.sidebar.title("📚 Menu & Status")
+
+# Tampilan Status Gamifikasi
+st.sidebar.subheader("🏆 Status Pahlawan")
+level_titles = {1: "Trainee Bintang Kecil", 2: "Asisten Super Cepat", 3: "Kapten Kebersihan", 4: "Master Pahlawan"}
+current_title = level_titles.get(st.session_state.level, "Master Pahlawan")
+
+st.sidebar.markdown(f"**Level:** {st.session_state.level} ({current_title}) 🚀")
+st.sidebar.markdown(f"**Poin:** {st.session_state.points} ✨")
+st.sidebar.markdown("---")
+
 
 # Tentukan menu yang hanya berisi Modul Misi Harian
-st.sidebar.title("🛠️ Pilih Kegiatan")
 main_menu = st.sidebar.selectbox(
-    "1. Pilih Modul:",
+    "1. Pilih Kegiatan:",
     ["Tentang Aplikasi", "Misi Pahlawan Rumah Tangga"]
 )
 
 # --- Routing Logika Berdasarkan Pilihan Menu ---
 
 if main_menu == "Tentang Aplikasi":
-    st.info("Selamat datang di Home Hero Academy! Aplikasi ini menggunakan AI untuk mengubah tugas rumah tangga menjadi petualangan berpoin.")
+    st.info("Selamat datang di Home Hero Academy! Kami mengubah tugas sehari-hari menjadi petualangan berpoin untuk anak usia 4-8 tahun.")
     st.subheader("Cara Kerja:")
-    st.markdown("* **Pilih Misi:** Tulis tugas sehari-hari (merapikan kasur, cuci tangan).")
-    st.markdown("* **AI Buat Quest:** Gemini memecah tugas menjadi langkah-langkah permainan.")
-    st.markdown("* **Klaim Poin:** Setelah selesai di dunia nyata, klaim poin untuk naik **Level** dan dapat **Hadiah Cerita** (Reward Story).")
+    st.markdown("* **Pilih Misi:** Tulis tugas (merapikan kasur, cuci tangan).")
+    st.markdown("* **AI Buat Quest:** Gemini memecah tugas menjadi langkah-langkah permainan yang menyenangkan.")
+    st.markdown("* **Klaim Poin:** Setelah selesai, klaim poin untuk naik **Level** dan dapat **Hadiah Cerita** (Reward Story) khusus.")
     st.markdown(f"Model Dasar: **{MODEL_FLASH}**")
 
 elif main_menu == "Misi Pahlawan Rumah Tangga":
